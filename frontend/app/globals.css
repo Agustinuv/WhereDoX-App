@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+/*
+ * Semantic tokens, not raw colours. Tailwind v4 compiles `bg-panel` to
+ * `background-color: var(--color-panel)`, so redefining the variables under a
+ * [data-theme] selector swaps the whole theme without touching a single class name.
+ * Dark is the default because the chat was designed in it.
+ */
+@theme {
+  --color-canvas: #0f1420;
+  --color-panel: #161d2c;
+  --color-panel-soft: #1e2739;
+  --color-edge: #2a3547;
+
+  --color-ink: #e8edf5;
+  --color-ink-soft: #94a3b8;
+  --color-ink-faint: #64748b;
+
+  --color-warn-soft: rgb(245 158 11 / 0.18);
+  --color-warn-ink: #fcd34d;
+  --color-ok-soft: rgb(16 185 129 / 0.18);
+  --color-ok-ink: #6ee7b7;
+  --color-info-soft: rgb(14 165 233 / 0.18);
+  --color-info-ink: #7dd3fc;
+  --color-danger-soft: rgb(244 63 94 / 0.14);
+  --color-danger-ink: #fda4af;
+}
+
+:root[data-theme="light"] {
+  --color-canvas: #f4f6fa;
+  --color-panel: #ffffff;
+  --color-panel-soft: #eef1f6;
+  --color-edge: #dbe1ea;
+
+  --color-ink: #0f172a;
+  --color-ink-soft: #475569;
+  --color-ink-faint: #7c8899;
+
+  --color-warn-soft: #fef3c7;
+  --color-warn-ink: #92400e;
+  --color-ok-soft: #d1fae5;
+  --color-ok-ink: #065f46;
+  --color-info-soft: #e0f2fe;
+  --color-info-ink: #075985;
+  --color-danger-soft: #ffe4e6;
+  --color-danger-ink: #9f1239;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+}
+
+/* Native controls (selects, datetime inputs) follow the theme instead of the OS. */
+:root {
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+.thin-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.thin-scroll::-webkit-scrollbar-thumb {
+  background-color: var(--color-edge);
+  border-radius: 9999px;
+}
+.thin-scroll::-webkit-scrollbar-track {
+  background-color: transparent;
+}
