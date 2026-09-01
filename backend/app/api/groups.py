@@ -10,6 +10,7 @@ from app.domain.models import (
     NextHostOut,
     PersonCreate,
     PersonOut,
+    TelegramLinkOut,
 )
 from app.services import group_service, host_rotation_service
 
@@ -38,6 +39,16 @@ def list_groups_for_person(
         GroupOut.model_validate(group)
         for group in group_service.list_groups_for_person(session, person_id)
     ]
+
+
+@router.get(
+    "/people/{person_id}/telegram-link",
+    response_model=TelegramLinkOut,
+    summary="Deep link that binds this person's Telegram account",
+)
+def telegram_link(person_id: int, session: Session = Depends(get_session)) -> TelegramLinkOut:
+    """Hand this URL to the person — as a link or a QR — and /start does the rest."""
+    return group_service.build_telegram_link(session, person_id)
 
 
 @router.post("/groups", response_model=GroupOut, status_code=status.HTTP_201_CREATED)

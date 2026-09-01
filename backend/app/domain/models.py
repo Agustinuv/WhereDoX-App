@@ -35,6 +35,13 @@ class PersonOut(ORMModel):
     telegram_user_id: int | None
 
 
+class TelegramLinkOut(BaseModel):
+    person_id: int
+    name: str
+    url: str = Field(description="Deep link that binds the scanner's Telegram account.")
+    linked: bool = Field(description="Whether this person has already bound an account.")
+
+
 class GroupCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
 

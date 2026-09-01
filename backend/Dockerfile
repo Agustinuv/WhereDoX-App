@@ -8,6 +8,7 @@ WORKDIR /srv
 # Copy the manifest first so the dependency layer survives source-only changes.
 COPY pyproject.toml ./
 COPY app ./app
+COPY bot ./bot
 RUN pip install --no-cache-dir -e ".[dev]"
 
 COPY . .

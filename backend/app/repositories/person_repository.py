@@ -20,6 +20,18 @@ def list_all(session: Session) -> list[Person]:
 
 
 def get_by_telegram_user_id(session: Session, telegram_user_id: int) -> Person | None:
-    """Identity resolution for the future Telegram bot; unused by the REST prototype."""
+    """Identity resolution for the bot: an incoming update carries only this id."""
     stmt = select(Person).where(Person.telegram_user_id == telegram_user_id)
     return session.scalars(stmt).first()
+
+
+def set_telegram_user_id(session: Session, person: Person, telegram_user_id: int) -> Person:
+    person.telegram_user_id = telegram_user_id
+    session.flush()
+    return person
+
+
+def clear_telegram_user_id(session: Session, person: Person) -> Person:
+    person.telegram_user_id = None
+    session.flush()
+    return person
