@@ -1,5 +1,3 @@
-import logging
-
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -7,8 +5,9 @@ from sqlalchemy import text
 from app.api import attendance, events, games, groups, jobs, ratings, votes
 from app.core.database import engine
 from app.core.errors import DomainError
+from app.core.logs import configure_logging
 
-logging.basicConfig(level=logging.INFO)
+configure_logging()
 
 DESCRIPTION = """
 WhereDoX coordinates recurring board game nights: it picks the next host by rotation,
