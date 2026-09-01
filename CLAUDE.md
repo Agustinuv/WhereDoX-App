@@ -28,7 +28,12 @@ cp .env.example .env
 docker compose up -d db
 for f in migrations/*.sql; do docker compose exec -T db psql -U wheredox -d wheredox -q < "$f"; done
 docker compose up -d api web        # :3000 chat client, :8000/docs Swagger
+docker compose up -d bot            # needs TELEGRAM_BOT_TOKEN in .env
 docker compose exec api python -m seed.seed_data --reset
+
+# Live-demo state: no event open, presenter's Telegram re-bound to the next host.
+# See docs/demo-runbook.md — the 4-minute script and the settings that silently break it.
+docker compose exec api python -m seed.seed_data --reset --demo --telegram-user-id <id>
 # API_PORT / WEB_PORT in .env override the host ports.
 
 # Frontend
@@ -40,16 +45,22 @@ cd backend
 DATABASE_URL=postgresql+psycopg://wheredox:wheredox@localhost:5432/wheredox \
   .venv/bin/uvicorn app.main:app --reload
 
+# Bot on the host
+cd backend && .venv/bin/python -m bot.main
+
 # Tests
-.venv/bin/pytest                              # all 23
+export TEST_DATABASE_URL=postgresql+psycopg://wheredox:wheredox@localhost:5432/wheredox_test
+.venv/bin/pytest                              # all 69
 .venv/bin/pytest -m "not integration"         # unit only, no database
 .venv/bin/pytest tests/unit/test_voting_service.py::test_counts_and_score_per_date
-.venv/bin/black app seed tests
+.venv/bin/black app bot seed tests
 ```
 
-Integration tests apply `migrations/*.sql` to `TEST_DATABASE_URL` (falling back to
-`DATABASE_URL`) and truncate between tests, so they need a reachable Postgres and leave no
-state behind.
+Integration tests apply `migrations/*.sql` to `TEST_DATABASE_URL` and truncate between
+tests. **Always point it at a throwaway database** (`wheredox_test`). It falls back to
+`DATABASE_URL`, whose guard only rejects non-local URLs — running against the local
+`wheredox` database passes that guard and destroys the demo seed. Re-seed with
+`docker compose exec api python -m seed.seed_data --reset` if it happens.
 
 ## Architecture
 
@@ -58,12 +69,21 @@ backend/app/
   api/          thin HTTP adapter — translates requests to service calls, no logic
   services/     every decision: rotation, tally, confirmation, recommendation
   repositories/ the only code that touches the database
-  scheduler/    reminder job, a stub that logs instead of sending
+  scheduler/    reminder job, triggered by hand instead of by cron
+backend/bot/    Telegram adapter — long polling, handlers, no rules
+  handlers/     onboarding, voting, game_check, rating, status (/junta)
+  keyboards.py  the only place that turns port Buttons into Telegram markup
+  session.py    runs the sync data layer off the asyncio event loop
 frontend/       Next.js 16 (App Router) + Tailwind v4, chat-style client
   lib/timeline.ts  pure: API data -> chat messages
   hooks/useWorkspace.ts  all server state, refetched wholesale after each action
   components/   presentation only
 ```
+
+**`bot/` imports `app/`, never the reverse.** That is load-bearing: it is why the API runs
+with no bot, why the bot added zero business rules, and why the substitutability argument
+survived contact with a second real channel. A handler that grows an `if` about who may
+vote has moved a decision out of `services/` and broken the story.
 
 The boundaries exist to make pieces swappable, and that substitutability *is* the argument
 being presented — a router that reaches into a repository breaks the story, not just the
@@ -86,13 +106,41 @@ Event state machine: `draft → voting → confirmed → completed`, plus `cance
 
 Each is argued for and will be defended out loud:
 
-- **No authentication.** Every endpoint takes an explicit `person_id`. Telegram would make
-  this implicit via `telegram_user_id`, and only `api/` would change.
+- **No authentication in the REST API.** Every endpoint takes an explicit `person_id`. The
+  bot resolves identity implicitly from `telegram_user_id` instead, and adding it changed
+  only the adapter — no service, repository or rule moved.
+- **The deep-link token is the bare `person_id`.** `t.me/<bot>?start=3` binds you as person
+  3. Guessable, deliberately: the REST API already accepts any `person_id` from anyone, so
+  encrypting this one door would not secure a building with no walls. Do not "harden" it in
+  isolation — the fix is auth everywhere or nowhere.
+- **Telegram has no "maybe".** A native poll only reports checked/unchecked, so a tap is
+  `yes` and a blank is `no`. `MAYBE_WEIGHT` still governs the tally and the web client
+  still produces maybes; the poll was judged worth more than the half point. Agreed
+  explicitly — do not "fix" it by replacing the poll with buttons.
+- **Outbound Telegram calls are plain HTTPS via httpx, not python-telegram-bot.** Sending
+  needs only the token, so the API process notifies without any channel to the bot process.
+  The bot library is used solely for *receiving*.
+- **"Remind me later" is an in-memory job** in the bot process; a restart forgets it.
+  Persisting it means a job table plus a policy for missed jobs — not something to add
+  silently.
+- **`REMINDER_LEAD_HOURS` gates the reminder job silently.** An event outside the window
+  is skipped and the endpoint returns `[]` with no error. It is the single likeliest way
+  to lose the reminder beat in a demo — `docs/demo-runbook.md` sets it to 240.
+- **The host announcement does not repeat the rotation's reason.** Re-deriving *why*
+  someone was picked in `announcement_service` would duplicate `select_next_host`'s rule
+  in a second place. `GET /next-host` and the web client already show it verbatim.
+- **Announcements fan out synchronously inside the request.** `POST /confirm` and
+  `POST /complete` send one Telegram call per recipient before responding — a second or
+  two at six members. A queue is the right answer at real scale and the wrong one here.
+  `announcement_service.never_fails` guarantees a delivery failure can never roll back the
+  decision that triggered it.
 - **Hand-written, numbered plain-SQL migrations**, applied by hand, no Alembic. They are
   idempotent, so re-running the folder is safe. `012` closes the circular
   `events ↔ proposed_dates` foreign key and adds indexes a `UNIQUE` does not already imply.
-- **The scheduler logs instead of sending.** `POST /jobs/reminders` triggers it manually.
-  It is intentionally untested.
+- **No cron.** `POST /jobs/reminders` triggers the reminder manually. The job does send now
+  — through `NotificationPort` (`services/ports.py`), which resolves to Telegram when
+  `TELEGRAM_BOT_TOKEN` is set and to a logger when it is not. Leaving the token unset is a
+  supported mode, and the whole test suite runs in it.
 - **Rotation advances on confirmation, not completion.** The slot is taken when the date is
   locked.
 - **Ties are reported, not auto-resolved.** `POST /confirm` refuses a tie unless the host
@@ -137,11 +185,19 @@ Each is argued for and will be defended out loud:
   end users: UI strings and the recommender's `reasons`/`excluded` text are Spanish, because
   they are product copy rather than logs. Tables: `people`, `groups`, `group_members`, `games`,
   `game_libraries`, `events`, `proposed_dates`, `availability_votes`, `attendances`,
-  `games_played`, `ratings`.
+  `games_played`, `ratings`, `telegram_polls`.
 - Domain tuning knobs live in `app/core/constants.py` (`MAX_PROPOSED_DATES`, `MAYBE_WEIGHT`,
   recommender weights); per-deployment values live in `app/core/config.py` via
-  `pydantic-settings`. `frontend/lib/constants.ts` mirrors the few the UI needs — the
-  backend stays the authority and re-validates.
+  `pydantic-settings` (`TELEGRAM_BOT_TOKEN`, `DISPLAY_TIMEZONE`, `REMINDER_SNOOZE_MINUTES`).
+  `frontend/lib/constants.ts` mirrors the few the UI needs — the backend stays the
+  authority and re-validates.
+- `app/core/callbacks.py` is the button wire format, shared by both ends: `app/` builds the
+  buttons, `bot/` reads the taps. It lives in `core/` rather than `bot/` precisely so `app/`
+  never has to import the adapter. Decoding is strict — a bad parse must raise, because a
+  malformed `callback_data` fails *silently* in Telegram.
+- `app/core/database.py` builds its engine at import time, so importing anything that pulls
+  it in needs a valid `DATABASE_URL`. `bot/session.py` imports it inside the function for
+  that reason; keep it that way or the bot's unit tests start needing a database.
 - `migrations/*.sql` is the schema's source of truth. `app/domain/tables.py` mirrors it by
   hand; there is no `create_all` anywhere. Columns the schema defaults (`created_at`,
   `status`, `is_active`) declare a `server_default` so SQLAlchemy omits them from INSERTs

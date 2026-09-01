@@ -25,23 +25,31 @@ played 1x here"*, and the tally names who still owes a vote.
 
 ## Interfaces
 
-Two, on purpose:
+Three, on purpose — same decisions, three ways in:
 
 - **Swagger UI** (`/docs`) — every decision the system makes, endpoint by endpoint, with
   its reasoning in the response.
+- **A Telegram bot** (`t.me/where_do_x_bot`) — the channel a group actually lives in. It
+  sends the availability poll, the reminder and the rating buttons, and answers "what
+  should we play?" with the recommender. Nothing is typed: you tap.
 - **A chat client** (Next.js + Tailwind) that renders one game night as a conversation:
   system announcements, the availability poll with live results, each person's answer, the
-  scheduler's reminder, and the post-session ratings. It is a stand-in for the Telegram bot
-  that would be the real channel. Its home screen lists the groups the selected person
-  belongs to; picking someone who is not in the open group sends you back there. Dark and
-  light themes, toggled in the corner.
+  scheduler's reminder, and the post-session ratings. Its home screen lists the groups the
+  selected person belongs to; picking someone who is not in the open group sends you back
+  there. Dark and light themes, toggled in the corner.
+
+The bot is an adapter, not a second system: it calls the same `services/` the REST API
+calls, and it added exactly one table (`telegram_polls`) and zero business rules.
 
 **There is no authentication.** A dropdown picks who you are "viewing as", and that
 `person_id` is what the frontend sends. The available actions change with the selection:
 the host can propose dates, close the vote and log games; everyone else votes and rates.
 That is a deliberate prototype simplification, not an oversight — see *Known
-simplifications*. With Telegram the same identity would come from `telegram_user_id`, and
-only the `api/` layer would change.
+simplifications*.
+
+The bot is where that claim got tested. It resolves identity implicitly from
+`telegram_user_id`, so nobody states who they are — and the only code that had to change
+was the adapter. No service, no repository and no rule moved.
 
 ## Run it
 
@@ -57,6 +65,23 @@ docker compose up -d api web
 Then open <http://localhost:3000> for the chat client and
 <http://localhost:8000/docs> for Swagger. If those ports are taken, set `WEB_PORT` /
 `API_PORT` in `.env`.
+
+### The bot
+
+Put the token from [@BotFather](https://t.me/BotFather) in `.env` as
+`TELEGRAM_BOT_TOKEN`, then:
+
+```bash
+docker compose up -d bot
+```
+
+It long-polls, so there is no public URL, tunnel or webhook to arrange. Each person binds
+their account once by opening their own deep link — `GET /people/{id}/telegram-link`
+returns it, and it works as well pasted into a chat as printed as a QR code.
+
+Leaving `TELEGRAM_BOT_TOKEN` empty is a supported mode: the API keeps running and logs what
+it would have sent, exactly as it did before the bot existed. Only the `bot` service
+refuses to start.
 
 To point at Supabase instead, set `DATABASE_URL` to its pooler URI in `.env`, apply
 `migrations/` there once (see `migrations/README.md`), and leave the `db` service down.
@@ -89,13 +114,17 @@ cd frontend && npm install && npm run dev
 
 ```bash
 cd backend
+export TEST_DATABASE_URL=postgresql+psycopg://wheredox:wheredox@localhost:5432/wheredox_test
 .venv/bin/pytest                      # everything
 .venv/bin/pytest -m "not integration" # unit only, no database needed
 .venv/bin/pytest tests/unit/test_host_rotation_service.py::test_a_tie_on_the_same_date_goes_to_the_most_senior
 ```
 
-Integration tests apply the real migrations to `TEST_DATABASE_URL` (falling back to
-`DATABASE_URL`) and truncate between tests. Formatting is `black`.
+Integration tests apply the real migrations to `TEST_DATABASE_URL` and truncate between
+tests. **Set it to a throwaway database.** It falls back to `DATABASE_URL`, and a run
+against the database the demo is using will wipe the seed data — the fallback only refuses
+to run when the URL is not local, which is not the same as it being disposable.
+Formatting is `black`.
 
 ## Architecture
 
@@ -104,12 +133,16 @@ backend/app/
   api/          thin HTTP adapter — translates requests to service calls, no logic
   services/     every decision: rotation, tally, confirmation, recommendation
   repositories/ the only code that touches the database
-  scheduler/    reminder job, currently a stub that logs instead of sending
+  scheduler/    reminder job, triggered by hand instead of by cron
+backend/bot/    Telegram adapter — receives updates, calls the same services
 frontend/
   lib/timeline  pure: turns API data into chat messages
   hooks/        server state, refetched wholesale after every action
   components/   presentation only
 ```
+
+`bot/` imports `app/`, never the reverse. That is what lets the API run with no bot at
+all, and it is why adding Telegram changed no rule: `services/` did not move.
 
 The browser talks only to the Next server, which proxies `/api/*` to FastAPI. That is why
 the backend carries no CORS configuration. Next resolves that rewrite at **build** time,
@@ -131,8 +164,18 @@ Deliberate, and each one has a reason:
   implicit; adding a login to a prototype would have cost demo time and proved nothing.
 - **Plain SQL migrations**, numbered and applied by hand. A migration tool does not pay
   for itself at this scale. They are idempotent, so re-running the folder is safe.
-- **The scheduler logs instead of sending.** `POST /jobs/reminders` triggers it manually,
-  standing in for a real cron. No delivery channel is wired anywhere else in the code.
+- **No cron.** `POST /jobs/reminders` triggers the reminder by hand, standing in for Cloud
+  Scheduler. The job itself does send now — it hands the message to a `NotificationPort`,
+  which is Telegram when a token is configured and a logger when it is not.
+- **The deep link's token is the person id, unobscured.** Anyone who guesses `?start=3`
+  binds themselves as person 3 — which is exactly the trade every REST endpoint already
+  makes. Making this one spot cryptographic would not buy security the rest of the system
+  does not have.
+- **"Maybe" does not exist over Telegram.** A native poll only knows checked and unchecked,
+  so a tap is a yes and a blank is a no. The poll was judged worth more than the half
+  point; `yes + 0.5 × maybe` still runs, and the web client still produces the maybes.
+- **"Remind me later" lives in memory.** The snooze is a job in the bot process, so a
+  restart forgets it. Persisting it needs a job table and a policy for missed jobs.
 - **The rotation advances on confirmation, not on completion.** The hosting slot is taken
   as soon as the date is locked; a cancelled event is rare enough to fix by hand.
 - **No voting deadline.** A poll stays open until the host closes it. Instead of a timer the
@@ -142,7 +185,6 @@ Deliberate, and each one has a reason:
 
 ## Roadmap
 
-- A Telegram bot as the real channel.
 - One-off activity groups (a tennis match, a hike): no host rotation, and the organiser
   closes the invitation by choice instead of by tally. Likely a separate state machine
   reusing `groups`/`group_members` — see `docs/initial-project-plan.md`.

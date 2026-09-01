@@ -31,3 +31,8 @@ Or paste each file, in order, into the Supabase SQL editor.
 tables before it. `012` closes the loop: it adds the `events.confirmed_date_id` foreign
 key (which cannot exist until `proposed_dates` does, since the two tables reference each
 other) and creates the indexes that a `UNIQUE` constraint does not already provide.
+
+`013` adds `telegram_polls`, the only table the bot needed. It maps a Telegram poll id
+back to its event and each option index back to a proposed date. It has to be a table
+rather than memory because the API process sends the poll and the bot process receives the
+answer — the database is all they share.
