@@ -53,12 +53,24 @@ async def run_start(monkeypatch, args, linker):
 
 
 @pytest.mark.asyncio
-async def test_without_a_token_it_asks_for_the_link(monkeypatch):
-    async def never_called():
-        raise AssertionError("the database should not be touched without a token")
+async def test_an_unknown_account_with_no_token_is_asked_for_the_link(monkeypatch):
+    async def unlinked():
+        return None
 
-    replies = await run_start(monkeypatch, [], never_called)
+    replies = await run_start(monkeypatch, [], unlinked)
     assert replies == [onboarding.NO_TOKEN]
+
+
+@pytest.mark.asyncio
+async def test_a_bare_start_from_a_linked_account_says_so_instead_of_sending_them_away(
+    monkeypatch,
+):
+    async def linked():
+        return "Agustín"
+
+    replies = await run_start(monkeypatch, [], linked)
+    assert "Agustín" in replies[0]
+    assert "/junta" in replies[0]
 
 
 @pytest.mark.asyncio

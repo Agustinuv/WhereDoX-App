@@ -11,6 +11,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from app.core.errors import DomainError
+from app.repositories import person_repository
 from app.services import group_service
 from bot.session import in_session
 
@@ -21,6 +22,10 @@ NO_TOKEN = (
     "(o su código QR). Ábrelo y volvemos a empezar."
 )
 UNKNOWN_PERSON = "Ese enlace no corresponde a nadie en WhereDoX. Pide uno nuevo a quien organiza."
+ALREADY_LINKED = (
+    "Hola de nuevo, {name} 👋 Tu cuenta ya está vinculada.\n"
+    "Escribe /junta para ver cómo va la próxima."
+)
 
 
 def parse_start_token(token: str) -> int | None:
@@ -32,6 +37,11 @@ def parse_start_token(token: str) -> int | None:
     return person_id if person_id > 0 else None
 
 
+def _linked_name(session, telegram_user_id: int) -> str | None:
+    person = person_repository.get_by_telegram_user_id(session, telegram_user_id)
+    return person.name if person else None
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
     telegram_user = update.effective_user
@@ -40,7 +50,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     person_id = parse_start_token(context.args[0] if context.args else "")
     if person_id is None:
-        await message.reply_text(NO_TOKEN)
+        # A bare /start from someone already bound is not an error — telling them to go
+        # find a link they no longer need is the kind of dead end that stalls a demo.
+        linked = await in_session(lambda session: _linked_name(session, telegram_user.id))
+        if linked is not None:
+            await message.reply_text(ALREADY_LINKED.format(name=linked))
+        else:
+            await message.reply_text(NO_TOKEN)
         return
 
     try:
