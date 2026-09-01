@@ -29,6 +29,19 @@ services:
         condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
+  # Same image as the API, different command. Long polling dials out to Telegram, so this
+  # service needs no port published and no public URL.
+  bot:
+    build: ./backend
+    env_file: .env
+    volumes:
+      - ./backend:/srv
+    depends_on:
+      db:
+        condition: service_healthy
+    command: python -m bot.main
+    restart: unless-stopped
+
   # Chat-style client. The browser only ever talks to this origin; Next proxies /api/*
   # to the backend server-side, which is why FastAPI needs no CORS configuration.
   web:
