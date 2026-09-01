@@ -11,7 +11,7 @@ from app.core.errors import ConflictError, NotFoundError
 from app.domain.models import GamePlayedOut, RatingCreate
 from app.domain.tables import Rating
 from app.repositories import game_repository, rating_repository
-from app.services import event_service
+from app.services import announcement_service, event_service
 
 
 def _require_played_event(session: Session, event_id: int):
@@ -24,12 +24,18 @@ def _require_played_event(session: Session, event_id: int):
 
 
 def add_game_played(session: Session, event_id: int, game_id: int) -> GamePlayedOut:
-    _require_played_event(session, event_id)
+    event = _require_played_event(session, event_id)
     game = game_repository.get(session, game_id)
     if game is None:
         raise NotFoundError(f"Game {game_id} does not exist.")
 
     played = rating_repository.add_game_played(session, event_id, game_id)
+
+    # Both orders have to work. Logging games before closing is covered by the ask that
+    # fires on completion; logging one afterwards is covered here, or that game would
+    # never be asked about at all.
+    if event.status == "completed":
+        announcement_service.request_ratings(session, event_id, only_game_id=game.id)
     return GamePlayedOut(id=played.id, game_id=game.id, game_name=game.name)
 
 

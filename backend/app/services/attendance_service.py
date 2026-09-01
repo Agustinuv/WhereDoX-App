@@ -11,7 +11,7 @@ from app.repositories import (
     group_repository,
     vote_repository,
 )
-from app.services import event_service, voting_service
+from app.services import announcement_service, event_service, voting_service
 
 
 def confirm_date(session: Session, event_id: int, payload: DateConfirm) -> Event:
@@ -36,6 +36,7 @@ def confirm_date(session: Session, event_id: int, payload: DateConfirm) -> Event
     group_repository.set_last_hosted_at(
         session, event.group_id, event.host_id, proposed.starts_at.date()
     )
+    announcement_service.announce_confirmation(session, event_id)
     return event
 
 
@@ -94,4 +95,8 @@ def complete_event(session: Session, event_id: int, person_id: int) -> Event:
             f"Event {event_id} is {event.status}; only a confirmed event completes."
         )
     event_repository.set_status(session, event, "completed")
+
+    # Ratings are the step people forget, so the ask goes out the moment the night closes
+    # rather than waiting for someone to open the app.
+    announcement_service.request_ratings(session, event_id)
     return event

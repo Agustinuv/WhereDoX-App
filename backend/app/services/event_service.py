@@ -24,7 +24,7 @@ from app.repositories import (
     person_repository,
     rating_repository,
 )
-from app.services import host_rotation_service
+from app.services import announcement_service, host_rotation_service
 
 
 def require_event(session: Session, event_id: int) -> Event:
@@ -61,7 +61,9 @@ def create_event(session: Session, group_id: int, payload: EventCreate) -> Event
         candidates = host_rotation_service.load_candidates(session, group_id)
         host_id = host_rotation_service.select_next_host(candidates).candidate.person_id
 
-    return event_repository.create(session, group_id, host_id, payload.title)
+    event = event_repository.create(session, group_id, host_id, payload.title)
+    announcement_service.announce_host_assignment(session, event.id)
+    return event
 
 
 def propose_dates(
@@ -92,6 +94,10 @@ def propose_dates(
     event_repository.add_proposed_dates(session, event_id, fresh)
     if event.status == "draft":
         event_repository.set_status(session, event, "voting")
+
+    # Opening the vote is the moment the group has to hear about it, whatever channel it
+    # is on. Without a bot token this logs, exactly as the project behaved before.
+    announcement_service.announce_vote(session, event_id)
     return event_repository.list_proposed_dates(session, event_id)
 
 

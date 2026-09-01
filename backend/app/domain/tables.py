@@ -21,6 +21,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -138,4 +139,21 @@ class Rating(Base):
     game_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("games.id"))
     person_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("people.id"))
     score: Mapped[int] = mapped_column(SmallInteger)
+    created_at: Mapped[datetime] = timestamp_column()
+
+
+class TelegramPoll(Base):
+    """A poll Telegram is holding on our behalf, and what its options mean here.
+
+    Telegram reports answers by option index, so the order of proposed_date_ids *is* the
+    mapping — see migrations/013.
+    """
+
+    __tablename__ = "telegram_polls"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    telegram_poll_id: Mapped[str] = mapped_column(Text)
+    event_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("events.id"))
+    chat_id: Mapped[int] = mapped_column(BigInteger)
+    proposed_date_ids: Mapped[list[int]] = mapped_column(ARRAY(BigInteger))
     created_at: Mapped[datetime] = timestamp_column()
