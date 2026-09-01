@@ -15,6 +15,7 @@ from sqlalchemy.orm import sessionmaker
 MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "migrations"
 
 TABLES = [
+    "telegram_polls",
     "ratings",
     "games_played",
     "attendances",
@@ -81,6 +82,22 @@ def clean_database(engine):
     with engine.begin() as connection:
         connection.execute(text(f"TRUNCATE {', '.join(TABLES)} RESTART IDENTITY CASCADE"))
     return engine
+
+
+@pytest.fixture
+def session(clean_database):
+    """A session on the same engine as `client`, for driving services the API does not expose.
+
+    The bot calls services directly rather than over HTTP, so its tests need this instead
+    of a TestClient.
+    """
+    factory = sessionmaker(bind=clean_database, autoflush=False, expire_on_commit=False)
+    db = factory()
+    try:
+        yield db
+        db.commit()
+    finally:
+        db.close()
 
 
 @pytest.fixture
